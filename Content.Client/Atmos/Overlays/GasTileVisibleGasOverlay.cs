@@ -1,4 +1,4 @@
-using Content.Client.Atmos.Components;
+﻿using Content.Client.Atmos.Components;
 using Content.Shared.Atmos;
 using Content.Shared.Atmos.Components;
 using Content.Shared.Atmos.EntitySystems;
@@ -18,7 +18,7 @@ using DrawDepth = Content.Shared.DrawDepth.DrawDepth;
 namespace Content.Client.Atmos.Overlays;
 
 /// <summary>
-/// Overlay responsible for rendering visible atmos gasses (like plasma for example) usin.
+/// Overlay responsible for rendering visible atmos gasses (like plasma for example).
 /// </summary>
 public sealed class GasTileVisibleGasOverlay : Overlay
 {
@@ -27,7 +27,16 @@ public sealed class GasTileVisibleGasOverlay : Overlay
     [Dependency] private readonly IPrototypeManager _protoManager = default!;
     [Dependency] private readonly IMapManager _mapManager = default!;
 
-    private static readonly ProtoId<ShaderPrototype> UnshadedShader = "unshaded";
+    // Sunrise edit: gas indices that should never be rendered (transparent gases)
+    private static readonly HashSet<Gas> TransparentGases = new()
+    {
+        Gas.Oxygen,
+        Gas.Nitrogen,
+        Gas.CarbonDioxide,
+        Gas.NitrousOxide,
+    };
+
+    private readonly bool[] _isTransparent;
 
     private readonly SharedAtmosphereSystem _atmosphereSystem;
     private readonly SharedMapSystem _mapSystem;
@@ -36,7 +45,6 @@ public sealed class GasTileVisibleGasOverlay : Overlay
     private readonly SpriteSystem _spriteSystem;
 
     public override OverlaySpace Space => OverlaySpace.WorldSpaceEntities | OverlaySpace.WorldSpaceBelowWorld;
-    private readonly ShaderInstance _shader;
 
     // Gas overlays
     private readonly float[] _timer;
@@ -59,7 +67,6 @@ public sealed class GasTileVisibleGasOverlay : Overlay
         _gasTileOverlaySystem = _entManager.System<SharedGasTileOverlaySystem>();
         _spriteSystem = _entManager.System<SpriteSystem>();
 
-        _shader = _protoManager.Index(UnshadedShader).Instance();
         ZIndex = GasOverlayZIndex;
 
         _gasCount = _gasTileOverlaySystem.VisibleGasId.Length;
@@ -67,6 +74,12 @@ public sealed class GasTileVisibleGasOverlay : Overlay
         _frameDelays = new float[_gasCount][];
         _frameCounter = new int[_gasCount];
         _frames = new Texture[_gasCount][];
+        // Sunrise edit: precompute which visible gas indices are transparent (should be skipped in rendering)
+        _isTransparent = new bool[_gasCount];
+        for (var i = 0; i < _gasCount; i++)
+        {
+            _isTransparent[i] = TransparentGases.Contains((Gas)_gasTileOverlaySystem.VisibleGasId[i]);
+        }
 
         for (var i = 0; i < _gasCount; i++)
         {
@@ -80,7 +93,8 @@ public sealed class GasTileVisibleGasOverlay : Overlay
             else if (!string.IsNullOrEmpty(gasPrototype.GasOverlayTexture))
                 overlay = new SpriteSpecifier.Texture(new(gasPrototype.GasOverlayTexture));
             else
-                continue;
+                throw new InvalidOperationException(
+                    $"Visible gas '{_gasTileOverlaySystem.VisibleGasId[i]}' has no overlay asset configured."); // Sunrise edit
 
             switch (overlay)
             {
@@ -89,7 +103,8 @@ public sealed class GasTileVisibleGasOverlay : Overlay
                     var stateId = animated.RsiState;
 
                     if (!rsi.TryGetState(stateId, out var state))
-                        continue;
+                        throw new InvalidOperationException(
+                            $"Gas overlay state '{stateId}' was not found in '{gasPrototype.GasOverlaySprite}'."); // Sunrise edit
 
                     _frames[i] = state.GetFrames(RsiDirection.South);
                     _frameDelays[i] = state.GetDelays();
@@ -138,16 +153,19 @@ public sealed class GasTileVisibleGasOverlay : Overlay
             _gasCount,
             _frames,
             _frameCounter,
-            _shader,
             overlayQuery,
             xformQuery,
-            _xformSys);
+            _xformSys,
+            _isTransparent); // Sunrise edit
 
         var mapUid = _mapSystem.GetMapOrInvalid(args.MapId);
 
+        // Sunrise edit
         if (_entManager.TryGetComponent<MapAtmosphereComponent>(mapUid, out var atmos))
+        {
             DrawMapOverlay(drawHandle, args, mapUid, atmos);
-
+        }
+        // Sunrise edit
         if (args.Space != OverlaySpace.WorldSpaceEntities)
             return;
 
@@ -162,10 +180,10 @@ public sealed class GasTileVisibleGasOverlay : Overlay
                     int gasCount,
                     Texture[][] frames,
                     int[] frameCounter,
-                    ShaderInstance shader,
                     EntityQuery<GasTileOverlayComponent> overlayQuery,
                     EntityQuery<TransformComponent> xformQuery,
-                    SharedTransformSystem xformSys) state) =>
+                    SharedTransformSystem xformSys,
+                    bool[] isTransparent) state) => // Sunrise edit
             {
                 if (!state.overlayQuery.TryGetComponent(uid, out var comp) ||
                     !state.xformQuery.TryGetComponent(uid, out var gridXform))
@@ -186,7 +204,6 @@ public sealed class GasTileVisibleGasOverlay : Overlay
                 // ever moved to a single atlas, that should no longer be the case. So this is just grouping draw calls
                 // by chunk, even though its currently slower.
 
-                state.drawHandle.UseShader(null);
                 foreach (var chunk in comp.Chunks.Values)
                 {
                     var enumerator = new GasChunkEnumerator(chunk);
@@ -200,14 +217,20 @@ public sealed class GasTileVisibleGasOverlay : Overlay
                         if (!localBounds.Contains(tilePosition))
                             continue;
 
+                        // Sunrise edit:
                         for (var i = 0; i < state.gasCount; i++)
                         {
+                            // Sunrise edit: skip transparent gases (O2, N2, CO2, N2O)
+                            if (state.isTransparent[i])
+                                continue;
+
                             var opacity = gas.Opacity[i];
                             if (opacity > 0)
                             {
+                                // Sunrise edit: reduce gas brightness to 40%
                                 state.drawHandle.DrawTexture(state.frames[i][state.frameCounter[i]],
                                     tilePosition,
-                                    Color.White.WithAlpha(opacity));
+                                    Color.White.WithAlpha(opacity / 255f * 0.6f));
                             }
                         }
                     }
@@ -216,7 +239,6 @@ public sealed class GasTileVisibleGasOverlay : Overlay
                 return true;
             });
 
-        drawHandle.UseShader(null);
         drawHandle.SetTransform(Matrix3x2.Identity);
     }
 
@@ -245,12 +267,18 @@ public sealed class GasTileVisibleGasOverlay : Overlay
             {
                 var tilePosition = new Vector2(x, y);
 
+                // Sunrise edit
                 for (var i = 0; i < atmos.OverlayData.Opacity.Length; i++)
                 {
+                    // Sunrise edit: skip transparent gases (O2, N2, CO2, N2O)
+                    if (_isTransparent[i])
+                        continue;
+
                     var opacity = atmos.OverlayData.Opacity[i];
 
                     if (opacity > 0)
-                        handle.DrawTexture(_frames[i][_frameCounter[i]], tilePosition, Color.White.WithAlpha(opacity));
+                        // Sunrise edit: reduce gas brightness to 40%
+                        handle.DrawTexture(_frames[i][_frameCounter[i]], tilePosition, Color.White.WithAlpha(opacity / 255f * 0.6f));
                 }
             }
         }

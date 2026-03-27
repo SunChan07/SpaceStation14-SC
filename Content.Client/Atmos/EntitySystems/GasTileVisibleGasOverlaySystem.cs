@@ -1,4 +1,4 @@
-using Content.Client.Atmos.Overlays;
+﻿using Content.Client.Atmos.Overlays;
 using JetBrains.Annotations;
 using Robust.Client.Graphics;
 
