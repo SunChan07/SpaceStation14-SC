@@ -277,7 +277,7 @@ public sealed class GasTileVisibleGasOverlay : Overlay
                     var opacity = atmos.OverlayData.Opacity[i];
 
                     if (opacity > 0)
-                        // Sunrise edit: reduce gas brightness to 40%
+                        // Sunrise edit: reduce gas brightness to 60%
                         handle.DrawTexture(_frames[i][_frameCounter[i]], tilePosition, Color.White.WithAlpha(opacity / 255f * 0.6f));
                 }
             }
