@@ -3,6 +3,7 @@ using Content.Shared.Atmos.Components;
 using Content.Shared.Atmos.EntitySystems;
 using JetBrains.Annotations;
 using Robust.Shared.GameStates;
+using System.Linq;
 
 namespace Content.Client.Atmos.EntitySystems;
 
@@ -37,7 +38,7 @@ public sealed class GasTileOverlaySystem : SharedGasTileOverlaySystem
             case GasTileOverlayState state:
             {
                 modifiedChunks = state.Chunks;
-                foreach (var index in comp.Chunks.Keys)
+                foreach (var index in comp.Chunks.Keys.ToArray()) // Sunrise edit
                 {
                     if (!state.Chunks.ContainsKey(index))
                         comp.Chunks.Remove(index);
